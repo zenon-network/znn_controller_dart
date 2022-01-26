@@ -24,7 +24,7 @@ const optionResync = 'Resync';
 const optionHelp = 'Help';
 const optionQuit = 'Quit';
 
-const deamonDownloadUrl =
+const daemonDownloadUrl =
     'https://github.com/zenon-network/go-zenon/releases/download/v0.0.1-alphanet/$znnDaemon';
 
 const znnControllerVersion = '0.0.1';
@@ -515,7 +515,7 @@ void _downloadDaemon() {
   print('Preparing to download ' + green(znnDaemon));
   try {
     fetch(
-        url: deamonDownloadUrl,
+        url: daemonDownloadUrl,
         saveToPath: '/usr/local/bin/$znnDaemon',
         fetchProgress: (progress) {
           switch (progress.status) {
