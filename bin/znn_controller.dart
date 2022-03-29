@@ -11,11 +11,14 @@ import 'package:random_string_generator/random_string_generator.dart';
 import 'package:znn_sdk_dart/znn_sdk_dart.dart';
 
 const znnDaemon = 'znnd';
+const znnSource = 'go-zenon';
 const znnService = 'go-zenon.service';
-const genesisFileName = 'genesis.json';
-const peersFileName = 'peers.json';
+const znnGithubUrl = 'https://github.com/zenon-network/go-zenon';
 
-const optionMigrate = 'Migrate';
+const goLinuxDlUrl = 'https://go.dev/dl/go1.18.linux-amd64.tar.gz';
+const goLinuxSHA256Checksum =
+    'e85278e98f57cdb150fe8409e6e5df5343ecb13cebf03a5d5ff12bd55a80264f';
+
 const optionDeploy = 'Deploy';
 const optionStatus = 'Status';
 const optionStartService = 'Start service';
@@ -24,18 +27,30 @@ const optionResync = 'Resync';
 const optionHelp = 'Help';
 const optionQuit = 'Quit';
 
-const deamonDownloadUrl =
-    'https://github.com/zenon-network/go-zenon/releases/download/v0.0.1-alphanet/$znnDaemon';
-
-const znnControllerVersion = '0.0.1';
+const znnControllerVersion = '0.0.3';
 
 Future<void> main() async {
   var _operatingSystem = Platform.operatingSystem;
-  var _numberOfProcessors = Platform.numberOfProcessors;
-  var _loggedInUser = Shell.current.loggedInUser;
-  var _memTotal = MemInfo().mem_total_gb;
+
+  if (!Platform.isLinux) {
+    print(orange('Warning!') +
+        ' ZNN Node Controller is currently only supported on Linux hosts. Aborting.');
+    exit(0);
+  }
 
   _checkSuperuser();
+
+  int _numberOfProcessors = 0;
+  String? _loggedInUser = 'unknown user';
+  int _memTotal = 0;
+
+  try {
+    _numberOfProcessors = Platform.numberOfProcessors;
+    _loggedInUser = Shell.current.loggedInUser;
+    _memTotal = MemInfo().mem_total_gb;
+  } catch (e) {
+    print(e.toString());
+  }
 
   print(green('ZNN Node Controller v$znnControllerVersion'));
 
@@ -54,28 +69,19 @@ Future<void> main() async {
       '\nAvailable CPU cores: ' +
       green(_numberOfProcessors.toString()));
 
-  switch (_operatingSystem) {
-    case 'linux':
-      print('Linux Dart runtime: ' + green(Platform.version));
-      break;
-    default:
-      print(
-          'Operating system not supported. Only Linux is currently supported. Aborting');
-      exit(0);
-  }
+  print('Dart runtime: ' + green(Platform.version));
 
   var _ipv64json = await Ipify.ipv64();
 
   if (_ipv64json.isNotEmpty) {
     print('IP address: ' + green(_ipv64json));
   } else {
-    print(red('Error!') + ' Not connected to the Internet. Please retry later');
+    print(red('Error!') + ' Not connected to the Internet. Please retry.');
     exit(0);
   }
 
   var _selected =
       menu(prompt: 'Select an option from the ones listed above\n', options: [
-    optionMigrate,
     optionDeploy,
     optionStatus,
     optionStartService,
@@ -106,15 +112,6 @@ Future<void> main() async {
       KeyStoreManager(walletPath: znnDefaultWalletDirectory);
 
   switch (_selected) {
-    case optionMigrate:
-      if (_isZNNServiceActive()) {
-        _stopZNNService();
-      }
-      await _resync();
-      _downloadAndAddPeers(_configJson);
-      _checkAndDownloadGenesis();
-      _writeConfig(_configJson, znnDefaultDirectory.absolute.path);
-      break;
     case optionDeploy:
       if (_numberOfProcessors <= 4 && _memTotal <= 4) {
         print('Running on a machine with ' +
@@ -123,7 +120,7 @@ Future<void> main() async {
             red(_memTotal.toString() + ' GB RAM') +
             '\nIt is recommended to have a ' +
             green('minimum 4 cores and 4 GB RAM') +
-            ' for running a $optionDeploy');
+            ' for running the $optionDeploy process');
         if (MemInfo().swap_total_gb < 2) {
           print(orange('Warning!') +
               ' Insufficient swap space detected. It is recommended to have at least 2 GB of swap space configured');
@@ -134,13 +131,9 @@ Future<void> main() async {
           exit(0);
         }
       }
-
       print('Checking NTP service configuration ...');
-
-      _initNTPService();
-
+      _configureNTPService();
       print('Preparing $znnService service configuration ...');
-
       if (_isZNNServicePresent()) {
         print('$znnService service detected');
         if (_isZNNServiceActive()) {
@@ -149,21 +142,24 @@ Future<void> main() async {
       } else {
         print('$znnService service not detected');
         String _pid = _getPid(znnDaemon);
-        try {
-          int.parse(_pid);
+        if (_pid.isNotEmpty) {
           print('$znnDaemon is running, stopping it');
-          var processResult =
+          var _processResult =
               Process.runSync('kill', ['-9', _pid], runInShell: true);
-          if (processResult.exitCode != 0) {
-            print(red('Error!') + ' Kill failed. Aborting');
+          if (_processResult.exitCode != 0) {
+            print(red('Error!') + ' Kill failed. Aborting.');
             exit(0);
           }
-          // ignore: empty_catches
-        } catch (err) {}
+        }
         _initZNNService();
       }
 
-      _updateNodeDaemon();
+      if (!_installLinuxPrerequisites()) {
+        return;
+      }
+      if (!_buildFromSource('/root/$znnSource', '/usr/local/bin/$znnDaemon')) {
+        return;
+      }
 
       bool _isConfigured = false;
       File _keyStoreFile = File(znnDefaultDirectory.absolute.path +
@@ -171,7 +167,6 @@ Future<void> main() async {
           'wallet' +
           separator +
           'producer');
-
       if (_verifyProducerConfig(_configJson)) {
         if (confirm(
             'Producer configuration detected. Continue using the existing configuration?',
@@ -204,14 +199,14 @@ Future<void> main() async {
                 _p = true;
               } catch (e) {
                 _count++;
-                print('${red('Error!')} ${3 - _count} attempts left');
+                print(red('Error!') + ' ${3 - _count} attempts left');
               }
             }
             if (_count == 3) {
-              print('${red('Password verification failed 3 times!')} Aborting');
+              print(red('Error!') +
+                  ' Password verification failed 3 times. Aborting.');
               break;
             }
-
             Map _keyStoreJson = json.decode(_keyStoreFile.readAsStringSync());
             _configJson['Producer'] = {
               'Index': 0,
@@ -225,17 +220,13 @@ Future<void> main() async {
           _isConfigured = false;
         }
       }
-
       if (!_isConfigured) {
         String _password = RandomStringGenerator(fixedLength: 16).generate();
         File _newKeyStoreFile =
             await _keyStoreManager.createNew(_password, 'producer');
-
         print(
             'Key store file \'producer\' ${green('successfully')} created: ${_newKeyStoreFile.path}');
-
         Map _keyStoreJson = json.decode(_newKeyStoreFile.readAsStringSync());
-
         print(
             'Use the address ${_keyStoreJson['baseAddress']} to update the producing address of your Pillar. ${orange('Caution!')} It can be used only for one Pillar');
         _configJson['Producer'] = {
@@ -245,15 +236,12 @@ Future<void> main() async {
           'Address': _keyStoreJson['baseAddress']
         };
       }
-
       _writeConfig(_configJson, znnDefaultDirectory.absolute.path);
-
       _startZNNService();
-
       break;
+
     case optionStatus:
       _printServiceStatus();
-
       if (_verifyProducerConfig(_configJson)) {
         print('Producer Node configuration:');
         print('\tIndex: ${_configJson['Producer']['Index']}');
@@ -261,7 +249,6 @@ Future<void> main() async {
         print('\tPassword: ${_configJson['Producer']['Password']}');
         String producerAddress = _configJson['Producer']['Address'];
         print('\tAddress: ' + green(producerAddress));
-
         try {
           if (_isZNNServiceActive()) {
             final Zenon znnClient = Zenon();
@@ -270,10 +257,8 @@ Future<void> main() async {
             await znnClient.wsClient.initialize(_urlOption, retry: false);
             int pageIndex = 0;
             PillarInfo? pillarFound;
-
             PillarInfoList pillarList =
                 await znnClient.embedded.pillar.getAll(pageIndex: pageIndex);
-
             while (pillarList.list.isNotEmpty) {
               for (PillarInfo pillar in pillarList.list) {
                 if (pillar.producerAddress.toString() == producerAddress) {
@@ -285,7 +270,6 @@ Future<void> main() async {
               pillarList =
                   await znnClient.embedded.pillar.getAll(pageIndex: pageIndex);
             }
-
             Momentum? momentum = await znnClient.ledger.getFrontierMomentum();
             if (pillarFound != null) {
               print(
@@ -314,7 +298,6 @@ Future<void> main() async {
       } else {
         _startZNNService();
       }
-
       _printServiceStatus();
       print('Done');
       break;
@@ -326,25 +309,23 @@ Future<void> main() async {
         print('$znnService is not active');
         break;
       }
-
       _printServiceStatus();
-
       print('Done');
       break;
+
     case optionHelp:
-      print('Migrate - will download Alphanet genesis and initial peers');
-      print(
-          'Deploy - will deploy a full node with a producing key file configured');
-      print('Status - will print the status of the full node and the service');
+      print('Deploy - will deploy a Node with a producing key file configured');
+      print('Status - will print the status of the Node');
       print('Start service - will start the service');
       print('Stop service - will stop the service');
-      print('Resync - will resync the node from first momentum');
+      print('Resync - will resync the Node from genesis');
       print('Help');
       print('Quit');
       break;
+
     case optionResync:
       if (confirm(
-          'This option will resync the full node starting from the first momentum. Do you want to continue?',
+          'This option will resync the Node starting from genesis. Do you want to continue?',
           defaultValue: true)) {
         bool running = false;
         if (_isZNNServiceActive()) {
@@ -358,6 +339,7 @@ Future<void> main() async {
         }
       }
       break;
+
     default:
       break;
   }
@@ -376,7 +358,6 @@ Future<List<FileSystemEntity>> _getDirectoryContents(Directory directory) {
 
 Future<void> _resync() async {
   var subDirs = await _getDirectoryContents(znnDefaultDirectory);
-
   for (var dir in subDirs) {
     if (dir.path.split(Platform.pathSeparator).last.compareTo('network') == 0) {
       dir.deleteSync(recursive: true);
@@ -395,18 +376,20 @@ Future<void> _resync() async {
 }
 
 void _printServiceStatus() {
-  String znnServiceStatus =
-      Process.runSync('systemctl', ['status', znnService], runInShell: true)
-          .stdout
-          .toString();
   print('$znnService status:\n');
-  if (znnServiceStatus.isEmpty) {
-    znnServiceStatus =
-        Process.runSync('systemctl', ['status', znnService], runInShell: true)
-            .stderr
-            .toString();
+  ProcessResult _processResult =
+      Process.runSync('systemctl', ['status', znnService], runInShell: true);
+
+  print(_processResult.stdout.toString());
+
+  _processResult = Process.runSync('/usr/local/bin/$znnDaemon', ['version'],
+      runInShell: true);
+  if (_processResult.exitCode != 0) {
+    print(red('Error!') + ' $znnDaemon unavailable. Aborting.');
+    exit(0);
+  } else {
+    print(_processResult.stdout.toString());
   }
-  print(znnServiceStatus);
 }
 
 bool _verifyProducerConfig(Map<dynamic, dynamic> config) {
@@ -422,184 +405,130 @@ bool _verifyProducerConfig(Map<dynamic, dynamic> config) {
   return true;
 }
 
-dynamic _downloadAndAddPeers(dynamic _configJson) {
-  print('Preparing to download $peersFileName');
-  File peersFile =
-      File(znnDefaultDirectory.absolute.path + separator + peersFileName);
-  if (peersFile.existsSync()) {
-    peersFile.deleteSync();
-  }
-  var peersDownloadUrl =
-      ask('Please enter the URL to download the initial peers:');
-  try {
-    fetch(
-        url: peersDownloadUrl,
-        saveToPath:
-            znnDefaultDirectory.absolute.path + separator + peersFileName,
-        fetchProgress: (progress) {
-          switch (progress.status) {
-            case FetchStatus.connected:
-              print('Starting the download ...');
-              break;
-            case FetchStatus.error:
-              print(red('Error!') + ' File not downloaded. Please retry!');
-              break;
-            default:
-              break;
-          }
-        });
-  } catch (e) {
-    print(e);
-    exit(0);
-  }
-  print('$peersFileName downloaded ' + green('successfully'));
+bool _installLinuxPrerequisites() {
+  print('Installing Linux prerequisites ...');
 
-  String data = peersFile.readAsStringSync();
-  peersFile.deleteSync();
-  var peers = json.decode(data);
-
-  if (!peers.containsKey('Seeders')) {
-    throw 'Malformed peers.json';
-  }
-
-  for (var peer in peers['Seeders']) {
-    if (!_configJson.containsKey('Net')) {
-      _configJson['Net'] = {'Seeders': []};
-    } else if (!_configJson['Net'].containsKey('Seeders')) {
-      _configJson['Net']['Seeders'] = [];
-    }
-    if (!_configJson['Net']['Seeders'].contains(peer)) {
-      _configJson['Net']['Seeders'].add(peer);
-    }
-  }
-}
-
-void _checkAndDownloadGenesis() {
-  print('Preparing to download $genesisFileName');
-
-  File genesis =
-      File(znnDefaultDirectory.absolute.path + separator + genesisFileName);
-  if (genesis.existsSync()) {
-    print('Genesis already exists');
+  ProcessResult _processResult;
+  _processResult = Process.runSync('git', ['version'], runInShell: true);
+  if (_processResult.exitCode != 0) {
+    print('Git not detected, proceeding with the installation');
+    Process.runSync('apt', ['-y', 'install', 'git-all'], runInShell: true);
   } else {
-    var genesisDownloadUrl =
-        ask('Please enter the URL to download the Alphanet genesis:');
-    try {
-      fetch(
-          url: genesisDownloadUrl,
-          saveToPath:
-              znnDefaultDirectory.absolute.path + separator + genesisFileName,
-          fetchProgress: (progress) {
-            switch (progress.status) {
-              case FetchStatus.connected:
-                print('Starting the download ...');
-                break;
-              case FetchStatus.error:
-                print(red('Error!') + ' File not downloaded. Please retry!');
-                break;
-              default:
-                break;
-            }
-          });
-    } catch (e) {
-      print(e);
-      print('Please wait for the Alphanet Big Bang timestamp');
-      genesis.deleteSync();
-      exit(0);
-    }
-    print('$genesisFileName downloaded ' + green('successfully'));
+    print('Git installation detected: ' + _processResult.stdout.toString());
   }
-}
-
-void _downloadDaemon() {
-  print('Preparing to download ' + green(znnDaemon));
-  try {
-    fetch(
-        url: deamonDownloadUrl,
-        saveToPath: '/usr/local/bin/$znnDaemon',
-        fetchProgress: (progress) {
-          switch (progress.status) {
-            case FetchStatus.connected:
-              print('Starting the download ...');
-              break;
-            case FetchStatus.complete:
-              print('File downloaded ' + green('successfully'));
-              break;
-            case FetchStatus.error:
-              print(red('Error!') + ' File not downloaded. Please retry!');
-              break;
-            default:
-              break;
-          }
-        });
-  } catch (e) {
-    print('${red('Download error!')}: $e');
-  }
-}
-
-void _updateNodeDaemon() {
-  File _znnDaemonFile = File('/usr/local/bin/$znnDaemon');
-  if (_znnDaemonFile.existsSync()) {
-    _znnDaemonFile.deleteSync();
-  }
-
-  _downloadDaemon();
-  if (!_znnDaemonFile.existsSync()) {
-    print('There is no $znnDaemon available. Will exit now ...');
-    exit(0);
-  }
-
-  print('Please check the SHA256 hash of $znnDaemon');
-  print(green(Process.runSync('sha256sum', [_znnDaemonFile.absolute.path],
-          runInShell: true)
-      .stdout
-      .toString()));
-
-  Process.runSync('chmod', ['+x', '/usr/local/bin/$znnDaemon'],
-      runInShell: true);
-
-  print('Successfully updated: ' +
-      green(Process.runSync('/usr/local/bin/$znnDaemon', ['--version'],
+  if (Process.runSync('apt', ['-y', 'install', 'linux-kernel-headers'],
               runInShell: true)
-          .stdout
-          .toString()));
+          .exitCode !=
+      0) {
+    print(red('Error!') + ' Could not install linux-kernel-headers');
+    return false;
+  }
+  if (Process.runSync('apt', ['-y', 'install', 'build-essential'],
+              runInShell: true)
+          .exitCode !=
+      0) {
+    print(red('Error!') + ' Could not install build-essential');
+    return false;
+  }
+  if (Process.runSync('apt', ['-y', 'install', 'wget'], runInShell: true)
+          .exitCode !=
+      0) {
+    print(red('Error!') + ' Could not install wget');
+    return false;
+  }
+
+  _processResult =
+      Process.runSync('/usr/local/go/bin/go', ['version'], runInShell: true);
+  
+  if (_processResult.exitCode != 0) {
+    print('Go not detected, proceeding with the installation ...');
+    print('Preparing to download Go ...');
+    Process.runSync('wget', [goLinuxDlUrl],
+        workingDirectory: '/root', runInShell: true);
+    print('Checking Go download ...');
+    if (!_verifyChecksum(
+        '/root/go1.18.linux-amd64.tar.gz', goLinuxSHA256Checksum)) {
+      print(red('Error!') + ' Checksum validation failed');
+      return false;
+    }
+    print('Unpacking Go ...');
+    Process.runSync('tar',
+        ['-xzvf', '/root/go1.18.linux-amd64.tar.gz', '-C', '/usr/local/'],
+        runInShell: true);
+    Process.runSync('/usr/local/go/bin/go', ['version'], runInShell: true)
+        .stdout
+        .toString();
+    print('Cleaning downloaded files ...');
+    Process.runSync('rm', ['-rf', 'go1.18.linux-amd64.tar.gz'],
+        workingDirectory: '/root', runInShell: true);
+  } else {
+    print('Go installation detected: ' + _processResult.stdout.toString());
+  }
+
+  return true;
+}
+
+bool _buildFromSource(String sourcePath, String outputFile) {
+  Directory goZenonDir = Directory(sourcePath);
+  ProcessResult _processResult;
+  if (goZenonDir.existsSync()) {
+    goZenonDir.deleteSync(recursive: true);
+  }
+  print('Preparing to clone go-zenon ...');
+  _processResult = Process.runSync(
+      'git', ['clone', znnGithubUrl, goZenonDir.absolute.path],
+      runInShell: true);
+  if (_processResult.exitCode != 0) {
+    print(red('Error!') +
+        ' Could not clone ' +
+        znnGithubUrl +
+        ' into ' +
+        goZenonDir.path);
+    return false;
+  }
+  _processResult = Process.runSync(
+      '/usr/local/go/bin/go', ['build', '-ldflags', '-s -w', '-o', outputFile, 'main.go'],
+      workingDirectory: goZenonDir.absolute.path, runInShell: true);
+  if (_processResult.exitCode != 0) {
+    print(red('Error!') + ' Could not build $znnSource');
+    return false;
+  }
+  print(Process.runSync('file', ['znnd'],
+          workingDirectory: '/usr/local/bin/', runInShell: true)
+      .stdout
+      .toString());
+  return true;
 }
 
 String _getPid(String processName) {
   switch (Platform.operatingSystem) {
-    case 'linux':
-      ProcessResult processResult =
-          Process.runSync('pgrep', [processName], runInShell: true);
-      if (processResult.stderr.toString().isNotEmpty) {
-        return processResult.stderr.toString();
-      }
-      return processResult.stdout.toString();
     default:
-      return '';
+      ProcessResult _processResult =
+          Process.runSync('pgrep', [processName], runInShell: true);
+      if (_processResult.stderr.toString().isNotEmpty) {
+        return '';
+      }
+      return _processResult.stdout.toString();
   }
 }
 
 void _checkSuperuser() {
   if (Shell.current.isPrivilegedUser) {
-    print('Running with ' + green('superuser privileges'));
+    print('Running ZNN Controller with ' + green('superuser privileges'));
   } else {
-    print('Some commands require ' +
+    print('Cannot start ZNN Controller. Some commands require ' +
         green('superuser privileges') +
-        ' in order to successfully complete. Please run using superuser privileges');
+        ' in order to successfully complete. Please run again using superuser privileges');
     exit(0);
   }
 }
 
-bool _verifyFileHash(String hash, String filePath) {
-  switch (Platform.operatingSystem) {
-    case 'linux':
-      return (hash ==
-          Process.runSync('sha256sum', [filePath], runInShell: true)
-              .stdout
-              .toString());
-    default:
-      return false;
-  }
+bool _verifyChecksum(String filePath, String hash) {
+  return (hash ==
+      Process.runSync('shasum', ['-a', '256', filePath], runInShell: true)
+          .stdout
+          .toString()
+          .substring(0, 64));
 }
 
 Map _parseConfig(String znnInstallationPath) {
@@ -629,9 +558,9 @@ bool _isZNNServicePresent() {
 }
 
 bool _isZNNServiceActive() {
-  var processResult =
+  var _processResult =
       Process.runSync('systemctl', ['is-active', znnService], runInShell: true);
-  return processResult.stdout.toString().startsWith('active');
+  return _processResult.stdout.toString().startsWith('active');
 }
 
 void _stopZNNService({int delay = 2}) {
@@ -668,7 +597,7 @@ void _startZNNService({int delay = 2}) {
   }
 }
 
-void _initNTPService() {
+void _configureNTPService() {
   if (!File('/etc/systemd/timesyncd.conf').existsSync()) {
     print('Configuring NTP service ...');
     var f = File('/etc/systemd/timesyncd.conf');
