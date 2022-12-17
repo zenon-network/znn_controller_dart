@@ -1,0 +1,41 @@
+name: Build and release znn_controller
+
+on:
+  push:
+    branches:
+      - cicd
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-20.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Setup environment
+        run: sudo apt update && sudo apt upgrade -y && sudo apt install -y zip unzip wget
+      - name: Create output directories for resulting binaries
+        run: mkdir releases
+      - uses: dart-lang/setup-dart@v1.3
+      - name: Install dependencies
+        run: dart pub get
+      - name: Build znn_controller
+        run: dart compile exe -o releases/znn-controller bin/znn_controller.dart
+      - name: Setup argon2_ffi
+        run: wget -q https://github.com/alienc0der/argon2_ffi/releases/download/cicd/libargon2_ffi-linux-x86_64.zip && unzip -j libargon2_ffi-linux-x86_64.zip -d releases/
+      - name: Archive files
+        run: zip -jr releases/znn_controller-linux-x86_64.zip releases/*
+      - name: Generate checksums
+        run: cd releases/ && echo $(sha256sum *) >> SHA256CHECKSUMS.txt
+      - name: Cleanup files
+        run: cd releases/ && rm libargon2_ffi.so znn-controller
+      - name: Upload files to a GitHub release
+        uses: svenstaro/upload-release-action@2.3.0
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: releases/*
+          tag: ${{ github.ref }}
+          file_glob: true
+          overwrite: true
+          body: ""
