@@ -9,12 +9,15 @@ on:
 
 jobs:
   build-linux:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v3
       - name: Setup environment
-        run: sudo apt update && sudo apt upgrade -y && sudo apt install -y zip unzip wget
+        run: |
+          sudo apt update
+          sudo apt upgrade -y
+          sudo apt install -y zip unzip wget
       - name: Create output directories for resulting binaries
         run: mkdir releases
       - uses: dart-lang/setup-dart@v1.3
@@ -22,14 +25,18 @@ jobs:
         run: dart pub get
       - name: Build znn_controller
         run: dart compile exe -o releases/znn-controller bin/znn_controller.dart
+      - name: Download libargon2
+        uses: robinraju/release-downloader@v1.6
+        with:
+          repository: "alienc0der/argon2_ffi"
+          latest: true
       - name: Setup argon2_ffi
-        run: wget -q https://github.com/alienc0der/argon2_ffi/releases/download/cicd/libargon2_ffi-linux-x86_64.zip && unzip -j libargon2_ffi-linux-x86_64.zip -d releases/
+        run: |
+          unzip -j libargon2_ffi-linux-amd64.zip -d ./
       - name: Archive files
-        run: zip -jr releases/znn_controller-linux-x86_64.zip releases/*
+        run: zip -jr releases/znn_controller-linux-x86_64.zip releases/znn-controller ./libargon2_fii_plugin.so
       - name: Generate checksums
         run: cd releases/ && echo $(sha256sum *) >> SHA256CHECKSUMS.txt
-      - name: Cleanup files
-        run: cd releases/ && rm libargon2_ffi.so znn-controller
       - name: Upload files to a GitHub release
         uses: svenstaro/upload-release-action@2.3.0
         with:
