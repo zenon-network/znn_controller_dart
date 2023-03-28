@@ -20,13 +20,13 @@ jobs:
           sudo apt install -y zip unzip wget
       - name: Create output directories for resulting binaries
         run: mkdir releases
-      - uses: dart-lang/setup-dart@v1.3
+      - uses: dart-lang/setup-dart@v1.5.0
       - name: Install dependencies
         run: dart pub get
       - name: Build znn_controller
         run: dart compile exe -o releases/znn-controller bin/znn_controller.dart
       - name: Download libargon2
-        uses: robinraju/release-downloader@v1.6
+        uses: robinraju/release-downloader@v1.7
         with:
           repository: "alienc0der/argon2_ffi"
           latest: true
@@ -38,7 +38,7 @@ jobs:
       - name: Generate checksums
         run: cd releases/ && echo $(sha256sum *) >> SHA256CHECKSUMS.txt
       - name: Upload files to a GitHub release
-        uses: svenstaro/upload-release-action@2.3.0
+        uses: svenstaro/upload-release-action@2.5.0
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: releases/*
