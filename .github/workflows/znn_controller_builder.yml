@@ -3,7 +3,7 @@ name: Build and release znn_controller
 on:
   push:
     branches:
-      - cicd
+      - master
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
@@ -28,7 +28,7 @@ jobs:
       - name: Download libargon2
         uses: robinraju/release-downloader@v1.7
         with:
-          repository: "alienc0der/argon2_ffi"
+          repository: "zenon-network/argon2_ffi"
           latest: true
       - name: Setup argon2_ffi
         run: |
