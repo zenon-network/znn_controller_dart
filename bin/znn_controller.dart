@@ -15,9 +15,9 @@ const znnSource = 'go-zenon';
 const znnService = 'go-zenon.service';
 const znnGithubUrl = 'https://github.com/zenon-network/go-zenon';
 
-const goLinuxDlUrl = 'https://go.dev/dl/go1.18.linux-amd64.tar.gz';
+const goLinuxDlUrl = 'https://go.dev/dl/go1.19.4.linux-amd64.tar.gz';
 const goLinuxSHA256Checksum =
-    'e85278e98f57cdb150fe8409e6e5df5343ecb13cebf03a5d5ff12bd55a80264f';
+    'c9c08f783325c4cf840a94333159cc937f05f75d36a8b307951d5bd959cf2ab8';
 
 const optionDeploy = 'Deploy';
 const optionStatus = 'Status';
@@ -439,7 +439,7 @@ bool _installLinuxPrerequisites() {
 
   _processResult =
       Process.runSync('/usr/local/go/bin/go', ['version'], runInShell: true);
-  
+
   if (_processResult.exitCode != 0) {
     print('Go not detected, proceeding with the installation ...');
     print('Preparing to download Go ...');
@@ -447,19 +447,19 @@ bool _installLinuxPrerequisites() {
         workingDirectory: '/root', runInShell: true);
     print('Checking Go download ...');
     if (!_verifyChecksum(
-        '/root/go1.18.linux-amd64.tar.gz', goLinuxSHA256Checksum)) {
+        '/root/go1.19.4.linux-amd64.tar.gz', goLinuxSHA256Checksum)) {
       print(red('Error!') + ' Checksum validation failed');
       return false;
     }
     print('Unpacking Go ...');
     Process.runSync('tar',
-        ['-xzvf', '/root/go1.18.linux-amd64.tar.gz', '-C', '/usr/local/'],
+        ['-xzvf', '/root/go1.19.4.linux-amd64.tar.gz', '-C', '/usr/local/'],
         runInShell: true);
     Process.runSync('/usr/local/go/bin/go', ['version'], runInShell: true)
         .stdout
         .toString();
     print('Cleaning downloaded files ...');
-    Process.runSync('rm', ['-rf', 'go1.18.linux-amd64.tar.gz'],
+    Process.runSync('rm', ['-rf', 'go1.19.4.linux-amd64.tar.gz'],
         workingDirectory: '/root', runInShell: true);
   } else {
     print('Go installation detected: ' + _processResult.stdout.toString());
@@ -486,8 +486,8 @@ bool _buildFromSource(String sourcePath, String outputFile) {
         goZenonDir.path);
     return false;
   }
-  _processResult = Process.runSync(
-      '/usr/local/go/bin/go', ['build', '-ldflags', '-s -w', '-o', outputFile, 'main.go'],
+  _processResult = Process.runSync('/usr/local/go/bin/go',
+      ['build', '-ldflags', '-s -w', '-o', outputFile, 'main.go'],
       workingDirectory: goZenonDir.absolute.path, runInShell: true);
   if (_processResult.exitCode != 0) {
     print(red('Error!') + ' Could not build $znnSource');
