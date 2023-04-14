@@ -3,11 +3,12 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:dart_ipify/dart_ipify.dart';
 import 'package:dcli/dcli.dart';
-import 'package:linux_system_info/linux_system_info.dart';
 import 'package:random_string_generator/random_string_generator.dart';
+import 'package:system_info2/system_info2.dart';
 import 'package:znn_sdk_dart/znn_sdk_dart.dart';
 
 const znnDaemon = 'znnd';
@@ -15,9 +16,9 @@ const znnSource = 'go-zenon';
 const znnService = 'go-zenon.service';
 const znnGithubUrl = 'https://github.com/zenon-network/go-zenon';
 
-const goLinuxDlUrl = 'https://go.dev/dl/go1.18.linux-amd64.tar.gz';
+const goLinuxDlUrl = 'https://go.dev/dl/go1.20.3.linux-amd64.tar.gz';
 const goLinuxSHA256Checksum =
-    'e85278e98f57cdb150fe8409e6e5df5343ecb13cebf03a5d5ff12bd55a80264f';
+    '979694c2c25c735755bf26f4f45e19e64e4811d661dd07b8c010f7a8e18adfca';
 
 const optionDeploy = 'Deploy';
 const optionStatus = 'Status';
@@ -27,27 +28,26 @@ const optionResync = 'Resync';
 const optionHelp = 'Help';
 const optionQuit = 'Quit';
 
-const znnControllerVersion = '0.0.3';
+const znnControllerVersion = '0.0.4';
 
 Future<void> main() async {
-  var _operatingSystem = Platform.operatingSystem;
+  var operatingSystem = Platform.operatingSystem;
 
   if (!Platform.isLinux) {
-    print(orange('Warning!') +
-        ' ZNN Node Controller is currently only supported on Linux hosts. Aborting.');
+    print(
+        '${orange('Warning!')} ZNN Node Controller is currently only supported on Linux hosts. Aborting.');
     exit(0);
   }
 
   _checkSuperuser();
 
-  int _numberOfProcessors = 0;
-  String? _loggedInUser = 'unknown user';
-  int _memTotal = 0;
+  int numberOfProcessors = 0;
+  String? loggedInUser = 'unknown user';
+  int memTotal = SysInfo.getTotalVirtualMemory();
 
   try {
-    _numberOfProcessors = Platform.numberOfProcessors;
-    _loggedInUser = Shell.current.loggedInUser;
-    _memTotal = MemInfo().mem_total_gb;
+    numberOfProcessors = Platform.numberOfProcessors;
+    loggedInUser = Shell.current.loggedInUser;
   } catch (e) {
     print(e.toString());
   }
@@ -56,32 +56,22 @@ Future<void> main() async {
 
   print('Gathering system information ...');
 
-  print('System info:\nShell: ' +
-      green(Shell.current.name) +
-      '\nUser: ' +
-      green(_loggedInUser!) +
-      '\nHost: ' +
-      green(Platform.localHostname) +
-      '\nOperating system: ' +
-      green(_operatingSystem) +
-      '\nOS version: ' +
-      green(Platform.operatingSystemVersion) +
-      '\nAvailable CPU cores: ' +
-      green(_numberOfProcessors.toString()));
+  print(
+      'System info:\nShell: ${green(Shell.current.name)}\nUser: ${green(loggedInUser!)}\nHost: ${green(Platform.localHostname)}\nOperating system: ${green(operatingSystem)}\nOS version: ${green(Platform.operatingSystemVersion)}\nAvailable CPU cores: ${green(numberOfProcessors.toString())}');
 
-  print('Dart runtime: ' + green(Platform.version));
+  print('Dart runtime: ${green(Platform.version)}');
 
-  var _ipv64json = await Ipify.ipv64();
+  var ipv64json = await Ipify.ipv64();
 
-  if (_ipv64json.isNotEmpty) {
-    print('IP address: ' + green(_ipv64json));
+  if (ipv64json.isNotEmpty) {
+    print('IP address: ${green(ipv64json)}');
   } else {
-    print(red('Error!') + ' Not connected to the Internet. Please retry.');
+    print('${red('Error!')} Not connected to the Internet. Please retry.');
     exit(0);
   }
 
-  var _selected =
-      menu(prompt: 'Select an option from the ones listed above\n', options: [
+  var selected =
+      menu('Select an option from the ones listed above\n', options: [
     optionDeploy,
     optionStatus,
     optionStartService,
@@ -91,39 +81,35 @@ Future<void> main() async {
     optionQuit
   ]);
 
-  if (_selected == 'Quit') {
+  if (selected == 'Quit') {
     exit(0);
   }
 
   ensureDirectoriesExist();
 
-  var _znnConfigFilePath =
-      znnDefaultDirectory.absolute.path + separator + 'config.json';
-  var _znnConfigFile = File(_znnConfigFilePath);
+  var znnConfigFilePath =
+      '${znnDefaultDirectory.absolute.path + Platform.pathSeparator}config.json';
+  var znnConfigFile = File(znnConfigFilePath);
 
-  if (!_znnConfigFile.existsSync()) {
-    touch(_znnConfigFilePath, create: true);
-    _znnConfigFile.writeAsStringSync('{}');
+  if (!znnConfigFile.existsSync()) {
+    touch(znnConfigFilePath, create: true);
+    znnConfigFile.writeAsStringSync('{}');
   }
 
-  var _configJson = _parseConfig(znnDefaultDirectory.absolute.path);
+  var configJson = _parseConfig(znnDefaultDirectory.absolute.path);
 
-  KeyStoreManager _keyStoreManager =
+  KeyStoreManager keyStoreManager =
       KeyStoreManager(walletPath: znnDefaultWalletDirectory);
 
-  switch (_selected) {
+  switch (selected) {
     case optionDeploy:
-      if (_numberOfProcessors <= 4 && _memTotal <= 4) {
-        print('Running on a machine with ' +
-            red(_numberOfProcessors.toString() + ' core(s)') +
-            ' and ' +
-            red(_memTotal.toString() + ' GB RAM') +
-            '\nIt is recommended to have a ' +
-            green('minimum 4 cores and 4 GB RAM') +
-            ' for running the $optionDeploy process');
-        if (MemInfo().swap_total_gb < 2) {
-          print(orange('Warning!') +
-              ' Insufficient swap space detected. It is recommended to have at least 2 GB of swap space configured');
+      if (numberOfProcessors <= 4 && memTotal <= 4 * pow(10, 9)) {
+        print(
+            'Running on a machine with ${red('$numberOfProcessors core(s)')} and ${red('$memTotal GB RAM')}\nIt is recommended to have a ${green('minimum 4 cores and 4 GB RAM')} for running the $optionDeploy process');
+
+        if (SysInfo.getFreeVirtualMemory() < 2 * pow(10, 9)) {
+          print(
+              '${orange('Warning!')} Insufficient free virtual memory detected. It is recommended to have at least 2 GB of free virtual memory');
         }
         if (!confirm(
             'Are you sure you want to proceed with the deployment process?',
@@ -141,13 +127,13 @@ Future<void> main() async {
         }
       } else {
         print('$znnService service not detected');
-        String _pid = _getPid(znnDaemon);
-        if (_pid.isNotEmpty) {
+        String pid = _getPid(znnDaemon);
+        if (pid.isNotEmpty) {
           print('$znnDaemon is running, stopping it');
-          var _processResult =
-              Process.runSync('kill', ['-9', _pid], runInShell: true);
-          if (_processResult.exitCode != 0) {
-            print(red('Error!') + ' Kill failed. Aborting.');
+          var processResult =
+              Process.runSync('kill', ['-9', pid], runInShell: true);
+          if (processResult.exitCode != 0) {
+            print('${red('Error!')} Kill failed. Aborting.');
             exit(0);
           }
         }
@@ -161,100 +147,97 @@ Future<void> main() async {
         return;
       }
 
-      bool _isConfigured = false;
-      File _keyStoreFile = File(znnDefaultDirectory.absolute.path +
-          separator +
-          'wallet' +
-          separator +
-          'producer');
-      if (_verifyProducerConfig(_configJson)) {
+      bool isConfigured = false;
+      File keyStoreFile = File(
+          '${znnDefaultDirectory.absolute.path}${Platform.pathSeparator}wallet${Platform.pathSeparator}producer');
+      if (_verifyProducerConfig(configJson)) {
         if (confirm(
             'Producer configuration detected. Continue using the existing configuration?',
             defaultValue: true)) {
-          _isConfigured = true;
-          if (!_keyStoreFile.existsSync()) {
+          isConfigured = true;
+          if (!keyStoreFile.existsSync()) {
             if (!confirm(
                 'Producer key store file not detected. Do you want to create a new producer key store file and configure the Node with it?',
                 defaultValue: false)) {
-              _isConfigured = true;
+              isConfigured = true;
             }
           }
         }
       } else {
-        if (_keyStoreFile.existsSync()) {
+        if (keyStoreFile.existsSync()) {
           if (confirm(
               'Producer key store file detected. Do you want to configure the Node with it?',
               defaultValue: true)) {
-            bool _p = false;
-            String _keyStorePassword = '';
-            int _count = 0;
-            while (!_p && _count < 3) {
+            bool p = false;
+            String keyStorePassword = '';
+            int count = 0;
+            while (!p && count < 3) {
               try {
-                _keyStorePassword = ask(
+                keyStorePassword = ask(
                     'Insert the producer key store password:',
                     hidden: true,
                     validator: Ask.all([Ask.dontCare, Ask.lengthMin(2)]));
-                await _keyStoreManager.readKeyStore(
-                    _keyStorePassword, _keyStoreFile);
-                _p = true;
+                await keyStoreManager.readKeyStore(
+                    keyStorePassword, keyStoreFile);
+                p = true;
               } catch (e) {
-                _count++;
-                print(red('Error!') + ' ${3 - _count} attempts left');
+                count++;
+                print('${red('Error!')} ${3 - count} attempts left');
               }
             }
-            if (_count == 3) {
-              print(red('Error!') +
-                  ' Password verification failed 3 times. Aborting.');
+            if (count == 3) {
+              print(
+                  '${red('Error!')} Password verification failed 3 times. Aborting.');
               break;
             }
-            Map _keyStoreJson = json.decode(_keyStoreFile.readAsStringSync());
-            _configJson['Producer'] = {
+            Map keyStoreJson = json.decode(keyStoreFile.readAsStringSync());
+            configJson['Producer'] = {
               'Index': 0,
               'KeyFilePath': 'producer',
-              'Password': _keyStorePassword,
-              'Address': _keyStoreJson['baseAddress']
+              'Password': keyStorePassword,
+              'Address': keyStoreJson['baseAddress']
             };
-            _isConfigured = true;
+            isConfigured = true;
           }
         } else {
-          _isConfigured = false;
+          isConfigured = false;
         }
       }
-      if (!_isConfigured) {
-        String _password = RandomStringGenerator(fixedLength: 16).generate();
-        File _newKeyStoreFile =
-            await _keyStoreManager.createNew(_password, 'producer');
+      if (!isConfigured) {
+        String password = RandomStringGenerator(fixedLength: 16).generate();
+        File newKeyStoreFile =
+            await keyStoreManager.createNew(password, 'producer');
         print(
-            'Key store file \'producer\' ${green('successfully')} created: ${_newKeyStoreFile.path}');
-        Map _keyStoreJson = json.decode(_newKeyStoreFile.readAsStringSync());
+            'Key store file \'producer\' ${green('successfully')} created: ${newKeyStoreFile.path}');
+        Map keyStoreJson = json.decode(newKeyStoreFile.readAsStringSync());
         print(
-            'Use the address ${_keyStoreJson['baseAddress']} to update the producing address of your Pillar. ${orange('Caution!')} It can be used only for one Pillar');
-        _configJson['Producer'] = {
+            'Use the address ${keyStoreJson['baseAddress']} to update the producing address of your Pillar. ${orange('Caution!')} It can be used only for one Pillar');
+        configJson['Producer'] = {
           'Index': 0,
           'KeyFilePath': 'producer',
-          'Password': _password,
-          'Address': _keyStoreJson['baseAddress']
+          'Password': password,
+          'Address': keyStoreJson['baseAddress']
         };
       }
-      _writeConfig(_configJson, znnDefaultDirectory.absolute.path);
+      _writeConfig(configJson, znnDefaultDirectory.absolute.path);
       _startZNNService();
       break;
 
     case optionStatus:
       _printServiceStatus();
-      if (_verifyProducerConfig(_configJson)) {
+      if (_verifyProducerConfig(configJson)) {
         print('Producer Node configuration:');
-        print('\tIndex: ${_configJson['Producer']['Index']}');
-        print('\tKeyFilePath: ${_configJson['Producer']['KeyFilePath']}');
-        print('\tPassword: ${_configJson['Producer']['Password']}');
-        String producerAddress = _configJson['Producer']['Address'];
-        print('\tAddress: ' + green(producerAddress));
+        print('\tIndex: ${configJson['Producer']['Index']}');
+        print('\tKeyFilePath: ${configJson['Producer']['KeyFilePath']}');
+        print('\tPassword: ${configJson['Producer']['Password']}');
+        String producerAddress = configJson['Producer']['Address'];
+        print('\tAddress: ${green(producerAddress)}');
         try {
           if (_isZNNServiceActive()) {
             final Zenon znnClient = Zenon();
-            String _urlOption = 'ws://127.0.0.1:$defaultWsPort';
+            String urlOption = 'ws://127.0.0.1:$defaultWsPort';
             print('Syncing with the network ...');
-            await znnClient.wsClient.initialize(_urlOption, retry: false);
+            await znnClient.wsClient.initialize(urlOption, retry: false);
             int pageIndex = 0;
             PillarInfo? pillarFound;
             PillarInfoList pillarList =
@@ -377,18 +360,18 @@ Future<void> _resync() async {
 
 void _printServiceStatus() {
   print('$znnService status:\n');
-  ProcessResult _processResult =
+  ProcessResult processResult =
       Process.runSync('systemctl', ['status', znnService], runInShell: true);
 
-  print(_processResult.stdout.toString());
+  print(processResult.stdout.toString());
 
-  _processResult = Process.runSync('/usr/local/bin/$znnDaemon', ['version'],
+  processResult = Process.runSync('/usr/local/bin/$znnDaemon', ['version'],
       runInShell: true);
-  if (_processResult.exitCode != 0) {
-    print(red('Error!') + ' $znnDaemon unavailable. Aborting.');
+  if (processResult.exitCode != 0) {
+    print('${red('Error!')} $znnDaemon unavailable. Aborting.');
     exit(0);
   } else {
-    print(_processResult.stdout.toString());
+    print(processResult.stdout.toString());
   }
 }
 
@@ -408,61 +391,61 @@ bool _verifyProducerConfig(Map<dynamic, dynamic> config) {
 bool _installLinuxPrerequisites() {
   print('Installing Linux prerequisites ...');
 
-  ProcessResult _processResult;
-  _processResult = Process.runSync('git', ['version'], runInShell: true);
-  if (_processResult.exitCode != 0) {
+  ProcessResult processResult;
+  processResult = Process.runSync('git', ['version'], runInShell: true);
+  if (processResult.exitCode != 0) {
     print('Git not detected, proceeding with the installation');
     Process.runSync('apt', ['-y', 'install', 'git-all'], runInShell: true);
   } else {
-    print('Git installation detected: ' + _processResult.stdout.toString());
+    print('Git installation detected: ${processResult.stdout}');
   }
   if (Process.runSync('apt', ['-y', 'install', 'linux-kernel-headers'],
               runInShell: true)
           .exitCode !=
       0) {
-    print(red('Error!') + ' Could not install linux-kernel-headers');
+    print('${red('Error!')} Could not install linux-kernel-headers');
     return false;
   }
   if (Process.runSync('apt', ['-y', 'install', 'build-essential'],
               runInShell: true)
           .exitCode !=
       0) {
-    print(red('Error!') + ' Could not install build-essential');
+    print('${red('Error!')} Could not install build-essential');
     return false;
   }
   if (Process.runSync('apt', ['-y', 'install', 'wget'], runInShell: true)
           .exitCode !=
       0) {
-    print(red('Error!') + ' Could not install wget');
+    print('${red('Error!')} Could not install wget');
     return false;
   }
 
-  _processResult =
+  processResult =
       Process.runSync('/usr/local/go/bin/go', ['version'], runInShell: true);
-  
-  if (_processResult.exitCode != 0) {
+
+  if (processResult.exitCode != 0) {
     print('Go not detected, proceeding with the installation ...');
     print('Preparing to download Go ...');
     Process.runSync('wget', [goLinuxDlUrl],
         workingDirectory: '/root', runInShell: true);
     print('Checking Go download ...');
     if (!_verifyChecksum(
-        '/root/go1.18.linux-amd64.tar.gz', goLinuxSHA256Checksum)) {
-      print(red('Error!') + ' Checksum validation failed');
+        '/root/go1.19.4.linux-amd64.tar.gz', goLinuxSHA256Checksum)) {
+      print('${red('Error!')} Checksum validation failed');
       return false;
     }
     print('Unpacking Go ...');
     Process.runSync('tar',
-        ['-xzvf', '/root/go1.18.linux-amd64.tar.gz', '-C', '/usr/local/'],
+        ['-xzvf', '/root/go1.19.4.linux-amd64.tar.gz', '-C', '/usr/local/'],
         runInShell: true);
     Process.runSync('/usr/local/go/bin/go', ['version'], runInShell: true)
         .stdout
         .toString();
     print('Cleaning downloaded files ...');
-    Process.runSync('rm', ['-rf', 'go1.18.linux-amd64.tar.gz'],
+    Process.runSync('rm', ['-rf', 'go1.19.4.linux-amd64.tar.gz'],
         workingDirectory: '/root', runInShell: true);
   } else {
-    print('Go installation detected: ' + _processResult.stdout.toString());
+    print('Go installation detected: ${processResult.stdout}');
   }
 
   return true;
@@ -470,27 +453,24 @@ bool _installLinuxPrerequisites() {
 
 bool _buildFromSource(String sourcePath, String outputFile) {
   Directory goZenonDir = Directory(sourcePath);
-  ProcessResult _processResult;
+  ProcessResult processResult;
   if (goZenonDir.existsSync()) {
     goZenonDir.deleteSync(recursive: true);
   }
   print('Preparing to clone go-zenon ...');
-  _processResult = Process.runSync(
+  processResult = Process.runSync(
       'git', ['clone', znnGithubUrl, goZenonDir.absolute.path],
       runInShell: true);
-  if (_processResult.exitCode != 0) {
-    print(red('Error!') +
-        ' Could not clone ' +
-        znnGithubUrl +
-        ' into ' +
-        goZenonDir.path);
+  if (processResult.exitCode != 0) {
+    print(
+        '${red('Error!')} Could not clone $znnGithubUrl into ${goZenonDir.path}');
     return false;
   }
-  _processResult = Process.runSync(
-      '/usr/local/go/bin/go', ['build', '-ldflags', '-s -w', '-o', outputFile, 'main.go'],
+  processResult = Process.runSync('/usr/local/go/bin/go',
+      ['build', '-ldflags', '-s -w', '-o', outputFile, 'main.go'],
       workingDirectory: goZenonDir.absolute.path, runInShell: true);
-  if (_processResult.exitCode != 0) {
-    print(red('Error!') + ' Could not build $znnSource');
+  if (processResult.exitCode != 0) {
+    print('${red('Error!')} Could not build $znnSource');
     return false;
   }
   print(Process.runSync('file', ['znnd'],
@@ -503,22 +483,21 @@ bool _buildFromSource(String sourcePath, String outputFile) {
 String _getPid(String processName) {
   switch (Platform.operatingSystem) {
     default:
-      ProcessResult _processResult =
+      ProcessResult processResult =
           Process.runSync('pgrep', [processName], runInShell: true);
-      if (_processResult.stderr.toString().isNotEmpty) {
+      if (processResult.stderr.toString().isNotEmpty) {
         return '';
       }
-      return _processResult.stdout.toString();
+      return processResult.stdout.toString();
   }
 }
 
 void _checkSuperuser() {
   if (Shell.current.isPrivilegedUser) {
-    print('Running ZNN Controller with ' + green('superuser privileges'));
+    print('Running ZNN Controller with ${green('superuser privileges')}');
   } else {
-    print('Cannot start ZNN Controller. Some commands require ' +
-        green('superuser privileges') +
-        ' in order to successfully complete. Please run again using superuser privileges');
+    print(
+        'Cannot start ZNN Controller. Some commands require ${green('superuser privileges')} in order to successfully complete. Please run again using superuser privileges');
     exit(0);
   }
 }
@@ -532,7 +511,8 @@ bool _verifyChecksum(String filePath, String hash) {
 }
 
 Map _parseConfig(String znnInstallationPath) {
-  var config = File(znnInstallationPath + separator + 'config.json');
+  var config =
+      File('${znnInstallationPath + Platform.pathSeparator}config.json');
   if (config.existsSync()) {
     String data = config.readAsStringSync();
     Map map = json.decode(data);
@@ -548,19 +528,20 @@ String _formatJSON(Map<dynamic, dynamic> j) {
 }
 
 void _writeConfig(Map config, String znnInstallationPath) {
-  var configFile = File(znnInstallationPath + separator + 'config.json');
+  var configFile =
+      File('${znnInstallationPath + Platform.pathSeparator}config.json');
   configFile.writeAsStringSync(_formatJSON(config));
 }
 
 bool _isZNNServicePresent() {
-  File systemFile = File('/etc/systemd/system/' + znnService);
+  File systemFile = File('/etc/systemd/system/$znnService');
   return systemFile.existsSync();
 }
 
 bool _isZNNServiceActive() {
-  var _processResult =
+  var processResult =
       Process.runSync('systemctl', ['is-active', znnService], runInShell: true);
-  return _processResult.stdout.toString().startsWith('active');
+  return processResult.stdout.toString().startsWith('active');
 }
 
 void _stopZNNService({int delay = 2}) {
