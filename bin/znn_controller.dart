@@ -430,20 +430,34 @@ bool _installLinuxPrerequisites() {
         workingDirectory: '/root', runInShell: true);
     print('Checking Go download ...');
     if (!_verifyChecksum(
-        '/root/go1.19.4.linux-amd64.tar.gz', goLinuxSHA256Checksum)) {
+        '/root/${goLinuxDlUrl.substring(goLinuxDlUrl.lastIndexOf('/') + 1, goLinuxDlUrl.length)}',
+        goLinuxSHA256Checksum)) {
       print('${red('Error!')} Checksum validation failed');
       return false;
     }
     print('Unpacking Go ...');
-    Process.runSync('tar',
-        ['-xzvf', '/root/go1.19.4.linux-amd64.tar.gz', '-C', '/usr/local/'],
+    Process.runSync(
+        'tar',
+        [
+          '-xzvf',
+          '/root/${goLinuxDlUrl.substring(goLinuxDlUrl.lastIndexOf('/') + 1, goLinuxDlUrl.length)}',
+          '-C',
+          '/usr/local/'
+        ],
         runInShell: true);
     Process.runSync('/usr/local/go/bin/go', ['version'], runInShell: true)
         .stdout
         .toString();
     print('Cleaning downloaded files ...');
-    Process.runSync('rm', ['-rf', 'go1.19.4.linux-amd64.tar.gz'],
-        workingDirectory: '/root', runInShell: true);
+    Process.runSync(
+        'rm',
+        [
+          '-rf',
+          goLinuxDlUrl.substring(
+              goLinuxDlUrl.lastIndexOf('/') + 1, goLinuxDlUrl.length)
+        ],
+        workingDirectory: '/root',
+        runInShell: true);
   } else {
     print('Go installation detected: ${processResult.stdout}');
   }
