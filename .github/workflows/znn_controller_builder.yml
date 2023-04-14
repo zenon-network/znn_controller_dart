@@ -34,7 +34,8 @@ jobs:
         run: |
           unzip -j libargon2_ffi-linux-amd64.zip -d ./
       - name: Archive files
-        run: zip -jr releases/znn_controller-linux-x86_64.zip releases/znn-controller ./libargon2_fii_plugin.so
+        run: |
+          zip -jrm releases/znn_controller-linux-x86_64.zip releases/znn-controller ./libargon2_ffi_plugin.so
       - name: Generate checksums
         run: |
           cd releases/
