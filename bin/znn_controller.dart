@@ -481,7 +481,7 @@ bool _buildFromSource(String sourcePath, String outputFile) {
     return false;
   }
   processResult = Process.runSync('/usr/local/go/bin/go',
-      ['build', '-ldflags', '-s -w', '-o', outputFile, 'main.go'],
+      ['build', '-ldflags', '-s -w', '-o', outputFile, './cmd/znnd/main.go'],
       workingDirectory: goZenonDir.absolute.path, runInShell: true);
   if (processResult.exitCode != 0) {
     print('${red('Error!')} Could not build $znnSource');
