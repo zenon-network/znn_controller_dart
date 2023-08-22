@@ -378,8 +378,8 @@ void _printServiceStatus() {
 bool _verifyProducerConfig(Map<dynamic, dynamic> config) {
   if (!config.containsKey('Producer')) {
     return false;
-  } else if config['Producer'] == null {
-      return false;
+  } else if (config['Producer'] == null) {
+    return false;
   }
   if (!config['Producer'].containsKey('Index') ||
       !config['Producer'].containsKey('KeyFilePath') ||
