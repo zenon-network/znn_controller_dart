@@ -7,9 +7,9 @@ environment:
   sdk: '>=2.14.0 <3.0.0'
 
 dependencies:
-  dcli: ^2.1.0
+  dcli: ^3.0.2
   dart_ipify: ^1.1.1
-  system_info2: ^3.0.2
+  system_info2: ^4.0.0
   random_string_generator: ^2.0.0
   znn_sdk_dart:
     git:
